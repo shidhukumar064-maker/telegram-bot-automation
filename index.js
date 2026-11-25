@@ -2,24 +2,25 @@
 
 const http = require("http");
 const { Bot } = require("grammy");
-const { GoogleGenerativeAI } = require("@google/generative-ai");
 
 // ---------------------------------------------------------------------------
 // Config
 // ---------------------------------------------------------------------------
 const BOT_TOKEN = process.env.BOT_TOKEN;
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const PORT = process.env.PORT || 3000;
 const TIMEZONE = process.env.TIMEZONE || "Asia/Kolkata";
-const MODEL_NAME = "gemini-3.5-flash";
+const MODEL_NAME = "llama-3.3-70b-versatile";
+const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
 const MAX_HISTORY_MESSAGES = 20; // short-term memory: last ~10 exchanges per chat
+const REQUEST_TIMEOUT_MS = 30000;
 
 if (!BOT_TOKEN) {
   console.error("Missing BOT_TOKEN environment variable.");
   process.exit(1);
 }
-if (!GEMINI_API_KEY) {
-  console.error("Missing GEMINI_API_KEY environment variable.");
+if (!GROQ_API_KEY) {
+  console.error("Missing GROQ_API_KEY environment variable.");
   process.exit(1);
 }
 
@@ -80,30 +81,14 @@ function buildSystemInstruction() {
   } catch (e) {
     now = new Date().toISOString();
   }
-  return `${BASE_SYSTEM_INSTRUCTION}\n\nCURRENT LOCAL TIME FOR HER: ${now}. Use this only to keep your greetings and reminders natural; do not state the exact time unless it fits. keep responses concise and direct. `;
-}
-
-// ---------------------------------------------------------------------------
-// Gemini setup
-// ---------------------------------------------------------------------------
-const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-
-function getModel() {
-  return genAI.getGenerativeModel({
-    model: MODEL_NAME,
-    systemInstruction: buildSystemInstruction(),
-    generationConfig: {
-      temperature: 1.0,
-      topP: 0.95,
-      maxOutputTokens: 500,
-    },
-  });
+  return `${BASE_SYSTEM_INSTRUCTION}\n\nCURRENT LOCAL TIME FOR HER: ${now}. Use this only to keep your greetings and reminders natural; do not state the exact time unless it fits.`;
 }
 
 // ---------------------------------------------------------------------------
 // Short-term memory (per chat ID, in-process)
+// Groq uses the OpenAI-style roles: "user" and "assistant".
 // ---------------------------------------------------------------------------
-const histories = new Map(); // chatId -> [{ role: "user"|"model", parts: [{ text }] }]
+const histories = new Map(); // chatId -> [{ role: "user"|"assistant", content }]
 
 function getHistory(chatId) {
   if (!histories.has(chatId)) histories.set(chatId, []);
@@ -112,8 +97,59 @@ function getHistory(chatId) {
 
 function trimHistory(history) {
   while (history.length > MAX_HISTORY_MESSAGES) history.shift();
-  // Gemini requires the conversation to start with a "user" turn.
+  // Keep the conversation starting with a "user" turn.
   while (history.length > 0 && history[0].role !== "user") history.shift();
+}
+
+// ---------------------------------------------------------------------------
+// Groq API
+// Response shape:
+// {
+//   "choices": [
+//     { "index": 0, "message": { "role": "assistant", "content": "..." }, "finish_reason": "stop" }
+//   ],
+//   "usage": { ... }
+// }
+// ---------------------------------------------------------------------------
+async function callGroq(messages) {
+  const res = await fetch(GROQ_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${GROQ_API_KEY}`,
+    },
+    body: JSON.stringify({
+      model: MODEL_NAME,
+      messages,
+      temperature: 0.9,
+      top_p: 0.95,
+      max_tokens: 512,
+    }),
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  });
+
+  let data;
+  try {
+    data = await res.json();
+  } catch (e) {
+    data = null;
+  }
+
+  if (!res.ok) {
+    const detail = data && data.error && data.error.message ? data.error.message : `HTTP ${res.status}`;
+    const err = new Error(`Groq API error: ${detail}`);
+    err.status = res.status;
+    throw err;
+  }
+
+  const content =
+    data &&
+    Array.isArray(data.choices) &&
+    data.choices[0] &&
+    data.choices[0].message &&
+    data.choices[0].message.content;
+
+  return typeof content === "string" ? content.trim() : "";
 }
 
 const FALLBACK_REPLIES = [
@@ -127,34 +163,36 @@ function randomFallback() {
 
 async function generateReply(chatId, userText) {
   const history = getHistory(chatId);
-  const contents = [...history, { role: "user", parts: [{ text: userText }] }];
+  const messages = [
+    { role: "system", content: buildSystemInstruction() },
+    ...history,
+    { role: "user", content: userText },
+  ];
 
   let replyText = "";
-  let lastError;
 
   for (let attempt = 1; attempt <= 2; attempt++) {
     try {
-      const result = await getModel().generateContent({ contents });
-      replyText = (result.response.text() || "").trim();
+      replyText = await callGroq(messages);
       if (replyText) break;
     } catch (err) {
-      lastError = err;
-      console.error(`Gemini error (attempt ${attempt}):`, err && err.message ? err.message : err);
-      await new Promise((r) => setTimeout(r, 800));
+      console.error(`Groq error (attempt ${attempt}):`, err && err.message ? err.message : err);
+      // Don't retry on auth / bad request errors.
+      if (err && (err.status === 400 || err.status === 401 || err.status === 403 || err.status === 404)) break;
+      await new Promise((r) => setTimeout(r, 1500));
     }
   }
 
   if (!replyText) {
-    if (lastError) console.error("Gemini failed after retries.");
-    return { text: randomFallback(), saved: false };
+    return randomFallback();
   }
 
   // Save to memory only on success so the history stays consistent.
-  history.push({ role: "user", parts: [{ text: userText }] });
-  history.push({ role: "model", parts: [{ text: replyText }] });
+  history.push({ role: "user", content: userText });
+  history.push({ role: "assistant", content: replyText });
   trimHistory(history);
 
-  return { text: replyText, saved: true };
+  return replyText;
 }
 
 // ---------------------------------------------------------------------------
@@ -178,13 +216,13 @@ bot.on("message:text", async (ctx) => {
 
   const chatId = ctx.chat.id;
 
-  // Keep the "typing..." indicator alive while Gemini is thinking.
+  // Keep the "typing..." indicator alive while the model is thinking.
   const sendTyping = () => ctx.api.sendChatAction(chatId, "typing").catch(() => {});
   sendTyping();
   const typingTimer = setInterval(sendTyping, 4000);
 
   try {
-    const { text: reply } = await generateReply(chatId, text);
+    const reply = await generateReply(chatId, text);
     await ctx.reply(reply);
   } catch (err) {
     console.error("Handler error:", err);
