@@ -1,0 +1,17 @@
+{
+  "name": "loving-boyfriend-telegram-bot",
+  "version": "1.0.0",
+  "description": "Telegram bot (grammY + Gemini) that chats like a caring, loving boyfriend in warm Hinglish",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "@google/generative-ai": "^0.24.1",
+    "grammy": "^1.30.0"
+  }
+}
