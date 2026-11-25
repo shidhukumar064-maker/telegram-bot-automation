@@ -10,7 +10,7 @@ const BOT_TOKEN = process.env.BOT_TOKEN;
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const PORT = process.env.PORT || 3000;
 const TIMEZONE = process.env.TIMEZONE || "Asia/Kolkata";
-const MODEL_NAME = "openai/gpt-oss-120b";
+const MODEL_NAME = "llama-3.3-70b-versatile";
 const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
 const MAX_HISTORY_MESSAGES = 20; // short-term memory: last ~10 exchanges per chat
 const REQUEST_TIMEOUT_MS = 30000;
@@ -199,6 +199,13 @@ async function generateReply(chatId, userText) {
 // Telegram bot
 // ---------------------------------------------------------------------------
 const bot = new Bot(BOT_TOKEN);
+
+// Only respond in private (direct message) chats.
+// Anything from groups, supergroups or channels is ignored before any handler runs.
+bot.use(async (ctx, next) => {
+  if (!ctx.chat || ctx.chat.type !== "private") return;
+  await next();
+});
 
 bot.command("start", async (ctx) => {
   histories.delete(ctx.chat.id);
