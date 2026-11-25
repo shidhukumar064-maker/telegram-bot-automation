@@ -80,7 +80,7 @@ function buildSystemInstruction() {
   } catch (e) {
     now = new Date().toISOString();
   }
-  return `${BASE_SYSTEM_INSTRUCTION}\n\nCURRENT LOCAL TIME FOR HER: ${now}. Use this only to keep your greetings and reminders natural; do not state the exact time unless it fits.`;
+  return `${BASE_SYSTEM_INSTRUCTION}\n\nCURRENT LOCAL TIME FOR HER: ${now}. Use this only to keep your greetings and reminders natural; do not state the exact time unless it fits. keep responses concise and direct. `;
 }
 
 // ---------------------------------------------------------------------------
