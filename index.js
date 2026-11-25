@@ -11,7 +11,7 @@ const BOT_TOKEN = process.env.BOT_TOKEN;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const PORT = process.env.PORT || 3000;
 const TIMEZONE = process.env.TIMEZONE || "Asia/Kolkata";
-const MODEL_NAME = "gemini-2.5-flash";
+const MODEL_NAME = "gemini-1.5-flash";
 const MAX_HISTORY_MESSAGES = 20; // short-term memory: last ~10 exchanges per chat
 
 if (!BOT_TOKEN) {
