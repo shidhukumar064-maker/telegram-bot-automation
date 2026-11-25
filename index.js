@@ -95,7 +95,7 @@ function getModel() {
     generationConfig: {
       temperature: 1.0,
       topP: 0.95,
-      maxOutputTokens: 512,
+      maxOutputTokens: 150,
     },
   });
 }
